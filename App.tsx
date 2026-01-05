@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { DayOfWeek, PlannerRow, HistoryEntry, PriorityGroup, DayState } from './types';
 import { EditableCell } from './components/EditableCell';
 import { fixSpelling } from './services/geminiService';
+import { ChatBot } from './components/ChatBot';
 
 const createEmptyDays = (): Record<DayOfWeek, DayState> => ({
   [DayOfWeek.Monday]: { text: '', completed: false },
@@ -60,7 +61,6 @@ const App: React.FC = () => {
   const [editableWeekRange, setEditableWeekRange] = useState<string>(() => {
     const saved = localStorage.getItem('matrix_v9_week_range');
     if (saved) return saved;
-    // Calculate initial if not saved
     const d = new Date();
     d.setDate(d.getDate() - d.getDay() + 1);
     return getWeekRangeString(d);
@@ -70,6 +70,7 @@ const App: React.FC = () => {
   const [historyIndex, setHistoryIndex] = useState<number>(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
 
   useEffect(() => {
     localStorage.setItem('matrix_v9_current', JSON.stringify(rows));
@@ -120,7 +121,6 @@ const App: React.FC = () => {
   };
 
   const startNextWeek = () => {
-    // Save current to history using the edited range string
     const entry: HistoryEntry = {
       id: Math.random().toString(36).substr(2, 9),
       weekNumber: weekNumber,
@@ -130,16 +130,12 @@ const App: React.FC = () => {
     };
     setHistory(prev => [entry, ...prev]);
 
-    // Setup next week date
     const nextDate = new Date(weekStart);
     nextDate.setDate(nextDate.getDate() + 7);
     setWeekStart(nextDate);
     setWeekNumber(prev => prev + 1);
-    
-    // Automatically update the range string but allow the user to edit it further
     setEditableWeekRange(getWeekRangeString(nextDate));
 
-    // Deployment logic: Completed cells are cleared, Pending cells carry forward
     const nextRows = rows.map(row => {
       const nextDays = createEmptyDays();
       (Object.values(DayOfWeek) as DayOfWeek[]).forEach(day => {
@@ -180,6 +176,16 @@ const App: React.FC = () => {
 
   const activeHistoryEntry = filteredHistory[historyIndex];
   const displayRows = view === 'current' ? rows : (activeHistoryEntry?.rows || []);
+
+  const planSummary = useMemo(() => {
+    return rows.map(r => {
+      const tasks = (Object.entries(r.days) as [string, DayState][])
+        .filter(([_, d]) => d.text.trim())
+        .map(([day, d]) => `${day}: ${d.text} (${d.completed ? 'Done' : 'Pending'})`)
+        .join('; ');
+      return `[${r.priorityGroup}] ${r.label}: ${tasks || 'No tasks'}`;
+    }).join('\n');
+  }, [rows]);
 
   const renderGroupRows = (group: PriorityGroup, isReadOnly: boolean) => {
     const groupRows = displayRows.filter(r => r.priorityGroup === group);
@@ -264,8 +270,12 @@ const App: React.FC = () => {
 
         {view === 'current' ? (
           <div className="flex items-center gap-4">
+            <button onClick={() => setIsAssistantOpen(true)} className="flex items-center gap-2 text-blue-600 bg-blue-50 hover:bg-blue-100 px-4 py-2.5 rounded-full text-[11px] font-black uppercase tracking-widest transition-all">
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+              AI Assistant
+            </button>
             <button onClick={handleFixSpelling} disabled={isProcessing} className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-full text-[11px] font-black uppercase tracking-widest shadow-lg shadow-indigo-100 transition-all active:scale-95 disabled:opacity-50">
-              {isProcessing ? 'Fixing...' : 'Fix Spelling (AI)'}
+              {isProcessing ? 'Fixing...' : 'Fix Spelling (Fast)'}
             </button>
             <button onClick={startNextWeek} className="bg-white border border-slate-300 hover:border-slate-800 text-slate-600 px-6 py-2.5 rounded-full text-[11px] font-bold uppercase tracking-widest transition-all">
               Deploy Next Week
@@ -364,8 +374,14 @@ const App: React.FC = () => {
           <div className="flex items-center gap-2"><span className="w-3 h-3 bg-emerald-50 border border-emerald-200 rounded"></span> Green = Completed</div>
           <div className="flex items-center gap-2 text-indigo-500 italic">Hover cell to mark specific day task as done</div>
         </div>
-        <div>Matrix v9.0 • Editable Date Range</div>
+        <div>Matrix v9.0 • AI Strategy Assistant Active</div>
       </footer>
+
+      <ChatBot 
+        isOpen={isAssistantOpen} 
+        onClose={() => setIsAssistantOpen(false)} 
+        planContext={planSummary}
+      />
     </div>
   );
 };
