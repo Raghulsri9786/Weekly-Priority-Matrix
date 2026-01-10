@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { askComplexQuery } from '../services/geminiService';
 
@@ -6,6 +5,7 @@ interface ChatBotProps {
   isOpen: boolean;
   onClose: () => void;
   planContext: string;
+  userProfile?: { name: string, email: string };
 }
 
 declare global {
@@ -26,7 +26,7 @@ declare global {
   }
 }
 
-export const ChatBot: React.FC<ChatBotProps> = ({ isOpen, onClose, planContext }) => {
+export const ChatBot: React.FC<ChatBotProps> = ({ isOpen, onClose, planContext, userProfile }) => {
   const [messages, setMessages] = useState<{ role: 'user' | 'ai'; text: string }[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -79,7 +79,7 @@ export const ChatBot: React.FC<ChatBotProps> = ({ isOpen, onClose, planContext }
     setIsTyping(true);
 
     try {
-      const aiResponse = await askComplexQuery(userMsg, planContext);
+      const aiResponse = await askComplexQuery(userMsg, planContext, userProfile);
       setMessages(prev => [...prev, { role: 'ai', text: aiResponse }]);
     } catch (error: any) {
       if (error.message === "API_KEY_EXPIRED") {
@@ -133,8 +133,9 @@ export const ChatBot: React.FC<ChatBotProps> = ({ isOpen, onClose, planContext }
             <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center mx-auto mb-4">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
             </div>
+            {userProfile?.name && <p className="text-[10px] font-black text-blue-600 uppercase mb-2">Hi {userProfile.name},</p>}
             <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Deep Thinking Active</p>
-            <p className="text-xs text-slate-400 leading-relaxed">I have access to your current weekly matrix. Ask me to help prioritize, balance efforts, or suggest next steps.</p>
+            <p className="text-xs text-slate-400 leading-relaxed">I have access to your current weekly matrix and DevOps context. Ask me to help prioritize, balance efforts, or suggest next steps.</p>
           </div>
         ) : null}
 

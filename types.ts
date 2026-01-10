@@ -1,4 +1,3 @@
-
 export enum DayOfWeek {
   Monday = 'Monday',
   Tuesday = 'Tuesday',
@@ -28,4 +27,13 @@ export interface HistoryEntry {
   weekRange: string;
   timestamp: number;
   rows: PlannerRow[];
+}
+
+export interface UserSettings {
+  userName: string;
+  companyEmail: string;
+  devOpsPat: string;
+  organization: string;
+  project: string;
+  corsProxy?: string;
 }

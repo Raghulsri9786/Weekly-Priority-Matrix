@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 
 /**
  * Corrects spelling and minor grammar errors using gemini-flash-lite-latest for low latency.
@@ -7,7 +7,6 @@ export const fixSpelling = async (text: string): Promise<string> => {
   if (!text.trim() || text.length < 2) return text;
 
   try {
-    // Initialize inside the call to get the latest API_KEY from process.env
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
       model: 'gemini-flash-lite-latest',
@@ -27,19 +26,71 @@ export const fixSpelling = async (text: string): Promise<string> => {
 };
 
 /**
- * Handles complex reasoning queries using gemini-3-pro-preview with max thinking budget.
+ * Analyzes DevOps comments to extract status updates.
  */
-export const askComplexQuery = async (prompt: string, context: string): Promise<string> => {
+export const analyzeDevOpsComments = async (comments: string[]): Promise<{completed: string[], next: string[]}> => {
+  if (comments.length === 0) return { completed: [], next: [] };
+  
   try {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: `Analyze the following Azure DevOps discussion comments for a single work item. 
+      Extract structured progress information:
+      1. Completed Tasks: Items explicitly mentioned as done, finished, or tested successfully.
+      2. Next Tasks: Upcoming actions, plans, or next steps mentioned.
+      
+      Format your response strictly as JSON with "completed" and "next" arrays of strings.
+      
+      Comments:
+      ${comments.join('\n---\n')}`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            completed: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+              description: "Tasks that are finished."
+            },
+            next: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+              description: "Upcoming or planned tasks."
+            }
+          },
+          required: ["completed", "next"]
+        }
+      }
+    });
+
+    const text = response.text || '{"completed": [], "next": []}';
+    return JSON.parse(text);
+  } catch (error) {
+    console.error("DevOps Comment Analysis failed:", error);
+    return { completed: [], next: [] };
+  }
+};
+
+/**
+ * Handles complex reasoning queries using gemini-3-pro-preview with max thinking budget.
+ */
+export const askComplexQuery = async (prompt: string, context: string, userProfile?: { name: string, email: string }): Promise<string> => {
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const userContext = userProfile ? `User Profile: ${userProfile.name} (${userProfile.email})` : '';
+    
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
       contents: `Context (Current Weekly Plan):
       ${context}
       
+      ${userContext}
+      
       User Query: ${prompt}
       
-      Please provide a detailed, professional, and well-reasoned response based on the planning context.`,
+      Please provide a detailed, professional, and well-reasoned response based on the planning context. If the query relates to workload, prioritize items assigned to the user or categorized as P1.`,
       config: {
         thinkingConfig: { thinkingBudget: 32768 }
       }
