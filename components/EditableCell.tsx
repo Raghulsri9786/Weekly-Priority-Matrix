@@ -35,15 +35,15 @@ export const EditableCell: React.FC<EditableCellProps> = ({
 
   return (
     <div className={`relative group h-full min-h-[90px] transition-colors duration-200 border-r border-slate-200/50 last:border-r-0 ${
-      completed ? 'bg-emerald-50' : text.trim() ? 'bg-rose-50/40' : 'bg-transparent'
+      completed ? 'bg-emerald-100/90' : text.trim() ? 'bg-rose-100/70' : 'bg-transparent'
     } ${className}`}>
       <div
         ref={contentRef}
         contentEditable={!isReadOnly}
         onInput={handleInput}
         spellCheck={false}
-        className={`cell-content min-h-[90px] p-4 whitespace-pre-wrap outline-none break-words text-[12px] leading-relaxed cursor-text transition-all focus:bg-white/90 focus:shadow-inner ${
-          completed ? 'text-emerald-800' : 'text-slate-600'
+        className={`cell-content min-h-[90px] p-4 whitespace-pre-wrap outline-none break-words text-[12px] leading-relaxed cursor-text transition-all focus:bg-white/90 focus:shadow-inner font-medium ${
+          completed ? 'text-emerald-950' : 'text-slate-900'
         } ${isReadOnly ? 'pointer-events-none' : ''}`}
       />
       
@@ -53,10 +53,10 @@ export const EditableCell: React.FC<EditableCellProps> = ({
             e.stopPropagation();
             onToggleComplete();
           }}
-          className={`absolute top-2 right-2 w-6 h-6 rounded-full border shadow-sm flex items-center justify-center transition-all z-10
+          className={`absolute top-2 right-2 w-6 h-6 rounded-full border shadow-md flex items-center justify-center transition-all z-10
             ${completed 
-              ? 'bg-emerald-500 border-emerald-600 text-white opacity-100' 
-              : 'bg-white border-slate-200 text-slate-300 opacity-0 group-hover:opacity-100 hover:border-emerald-500 hover:text-emerald-500'
+              ? 'bg-emerald-600 border-emerald-700 text-white opacity-100' 
+              : 'bg-white border-slate-300 text-slate-400 opacity-0 group-hover:opacity-100 hover:border-emerald-600 hover:text-emerald-600'
             }
           `}
           title={completed ? 'Mark as Pending' : 'Mark as Completed'}

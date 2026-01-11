@@ -34,10 +34,10 @@ const INITIAL_ROWS: PlannerRow[] = [
 ];
 
 const GROUP_CONFIG: Record<PriorityGroup, { label: string; color: string; badge: string }> = {
-  P1: { label: 'P1: Critical Path (DevOps P1)', color: 'border-l-rose-500 bg-rose-50/30', badge: 'bg-rose-100 text-rose-700' },
-  P2: { label: 'P2: Strategic Ops (DevOps P2)', color: 'border-l-amber-500 bg-amber-50/30', badge: 'bg-amber-100 text-amber-700' },
-  P3: { label: 'P3: Operational (DevOps P3+)', color: 'border-l-slate-400 bg-slate-50/30', badge: 'bg-slate-100 text-slate-600' },
-  Meeting: { label: 'Engagement / Syncs', color: 'border-l-emerald-400 bg-emerald-50/30', badge: 'bg-amber-100 text-emerald-700' },
+  P1: { label: 'P1: Critical Path (DevOps P1)', color: 'border-l-rose-600 bg-rose-100/40', badge: 'bg-rose-200 text-rose-800' },
+  P2: { label: 'P2: Strategic Ops (DevOps P2)', color: 'border-l-amber-600 bg-amber-100/40', badge: 'bg-amber-200 text-amber-800' },
+  P3: { label: 'P3: Operational (DevOps P3+)', color: 'border-l-slate-500 bg-slate-100/40', badge: 'bg-slate-200 text-slate-700' },
+  Meeting: { label: 'Engagement / Syncs', color: 'border-l-emerald-600 bg-emerald-100/40', badge: 'bg-emerald-200 text-emerald-800' },
 };
 
 const App: React.FC = () => {
@@ -289,7 +289,7 @@ const App: React.FC = () => {
         <tr className={`border-b border-slate-200 ${GROUP_CONFIG[group].color}`}>
           <td colSpan={8} className="px-6 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-slate-600">
             <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${group === 'P1' ? 'bg-rose-500' : group === 'P2' ? 'bg-amber-500' : group === 'P3' ? 'bg-slate-400' : 'bg-emerald-400'}`}></span>
+              <span className={`w-2 h-2 rounded-full ${group === 'P1' ? 'bg-rose-600' : group === 'P2' ? 'bg-amber-600' : group === 'P3' ? 'bg-slate-500' : 'bg-emerald-600'}`}></span>
               {GROUP_CONFIG[group].label}
             </div>
           </td>
