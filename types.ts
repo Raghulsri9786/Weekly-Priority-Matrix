@@ -36,4 +36,5 @@ export interface UserSettings {
   organization: string;
   project: string;
   corsProxy?: string;
+  useProxy?: boolean;
 }

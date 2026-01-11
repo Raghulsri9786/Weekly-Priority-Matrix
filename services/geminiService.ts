@@ -27,49 +27,71 @@ export const fixSpelling = async (text: string): Promise<string> => {
 
 /**
  * Analyzes DevOps comments to extract status updates.
+ * Specifically looks for "completed", "next steps", and a general "current status".
  */
-export const analyzeDevOpsComments = async (comments: string[]): Promise<{completed: string[], next: string[]}> => {
-  if (comments.length === 0) return { completed: [], next: [] };
+export const analyzeDevOpsComments = async (comments: string[]): Promise<{summary: string, completed: string[], next: string[]}> => {
+  if (comments.length === 0) return { summary: "No discussion history found.", completed: [], next: [] };
   
   try {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // We reverse comments to put latest information first for context prioritization
+    const latestFirst = [...comments].reverse();
+
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Analyze the following Azure DevOps discussion comments for a single work item. 
-      Extract structured progress information:
-      1. Completed Tasks: Items explicitly mentioned as done, finished, or tested successfully.
-      2. Next Tasks: Upcoming actions, plans, or next steps mentioned.
+      contents: `You are an expert EDI Project Manager at Aptean. Analyze the following Azure DevOps discussion comments.
       
-      Format your response strictly as JSON with "completed" and "next" arrays of strings.
+      Extract the status into exactly three parts:
+      1. COMPLETED: Key technical milestones, validated documents (e.g. 850, 860, 810), and successful testing connections. 
+      2. NEXT TASK: Specific go-live dates/times, pending files, or upcoming monitoring tasks.
+      3. SUMMARY FOR THE FEATURE: A very short (1 sentence) overview of readiness.
+      
+      Special Attention:
+      - Look for go-live dates (e.g., Jan 6, 2026).
+      - Look for document validation (850, 860, 810).
+      - Look for environment details (ALDIS_US_MS_PRD).
+      - If you see "[IMAGE: ...]" markers, treat it as visual confirmation of success.
+      
+      Format your response strictly as JSON.
       
       Comments:
-      ${comments.join('\n---\n')}`,
+      ${latestFirst.join('\n---\n')}`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
+            summary: {
+              type: Type.STRING,
+              description: "Short 1-sentence readiness summary."
+            },
             completed: {
               type: Type.ARRAY,
               items: { type: Type.STRING },
-              description: "Tasks that are finished."
+              description: "Short list of technical milestones finished."
             },
             next: {
               type: Type.ARRAY,
               items: { type: Type.STRING },
-              description: "Upcoming or planned tasks."
+              description: "The immediate next action with date/time if available."
             }
           },
-          required: ["completed", "next"]
+          required: ["summary", "completed", "next"]
         }
       }
     });
 
-    const text = response.text || '{"completed": [], "next": []}';
-    return JSON.parse(text);
+    const text = response.text || '{"summary": "Status unknown", "completed": [], "next": []}';
+    const parsed = JSON.parse(text);
+    
+    // Ensure lists are never empty for UI clarity
+    if (parsed.completed.length === 0) parsed.completed = ["Ongoing project activities."];
+    if (parsed.next.length === 0) parsed.next = ["Review latest comments for next steps."];
+    
+    return parsed;
   } catch (error) {
     console.error("DevOps Comment Analysis failed:", error);
-    return { completed: [], next: [] };
+    return { summary: "Unable to analyze history", completed: ["Analysis failed."], next: ["Manual check required."] };
   }
 };
 

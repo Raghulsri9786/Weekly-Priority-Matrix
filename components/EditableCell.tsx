@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect } from 'react';
 
 interface EditableCellProps {
@@ -21,14 +20,16 @@ export const EditableCell: React.FC<EditableCellProps> = ({
   const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (contentRef.current && contentRef.current.innerText !== text) {
-      contentRef.current.innerText = text;
+    const el = contentRef.current;
+    if (el && el.innerText !== text) {
+      el.innerText = text;
     }
   }, [text]);
 
   const handleInput = () => {
-    if (contentRef.current) {
-      onTextChange(contentRef.current.innerText);
+    const el = contentRef.current;
+    if (el) {
+      onTextChange(el.innerText || "");
     }
   };
 
