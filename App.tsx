@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 import { DayOfWeek, PlannerRow, HistoryEntry, PriorityGroup, UserSettings, DevOpsFeature, HistoryStats, DayState } from './types';
 import { EditableCell } from './components/EditableCell';
 import { ChatBot } from './components/ChatBot';
@@ -688,6 +689,7 @@ const App: React.FC = () => {
       )}
 
       <ChatBot isOpen={isAssistantOpen} onClose={() => setIsAssistantOpen(false)} planContext={(view === 'current' ? rows : (history[historyIndex]?.rows || [])).map(r => `${r.label}: ${Object.values(r.days).map(d => d.text).join(' | ')}`).join('\n')} userProfile={{ name: settings.userName, email: settings.companyEmail }} />
+      <SpeedInsights />
     </div>
   );
 };
