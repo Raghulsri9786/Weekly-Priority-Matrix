@@ -12,8 +12,9 @@ export default defineConfig(({ mode }) => {
       },
       plugins: [react()],
       define: {
-        // Support both API_KEY (default) and GEMINI_API_KEY (common in Vercel)
-        'process.env.API_KEY': JSON.stringify(env.API_KEY || env.GEMINI_API_KEY),
+        // Vercel usually injects variables into process.env
+        // We make it available as process.env.API_KEY in the frontend code
+        'process.env.API_KEY': JSON.stringify(env.API_KEY || env.GEMINI_API_KEY || ''),
       },
       resolve: {
         alias: {
