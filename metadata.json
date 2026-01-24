@@ -1,5 +1,5 @@
 {
-  "name": "PlanMatrix Weekly",
-  "description": "A high-clarity Excel-style weekly matrix for professional task management with AI spelling correction and week-over-week archiving.",
+  "name": "Weekly Priority Matrix Pro",
+  "description": "A high-end SaaS planner built with Python FastAPI, GSAP animations, and Firebase Firestore.",
   "requestFramePermissions": []
 }

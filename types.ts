@@ -17,8 +17,8 @@ export interface DayState {
 export interface PlannerRow {
   id: string;
   priorityGroup: PriorityGroup;
-  effortLabel: string; // e.g., "50% E"
-  label: string; // Sub-label or task title
+  effortLabel: string; 
+  label: string; 
   days: Record<DayOfWeek, DayState>;
 }
 
@@ -60,4 +60,36 @@ export interface DevOpsFeature {
     completed: string[];
     next: string[];
   };
+}
+
+// Added missing types for roadmap functionality
+export interface WeeklyPlan {
+  monday: string;
+  tuesday: string;
+  wednesday: string;
+  thursday: string;
+  friday: string;
+  saturday: string;
+  sunday: string;
+}
+
+// Added missing constant for initializing a new user's roadmap
+export const EMPTY_PLAN: WeeklyPlan = {
+  monday: '',
+  tuesday: '',
+  wednesday: '',
+  thursday: '',
+  friday: '',
+  saturday: '',
+  sunday: '',
+};
+
+// Added UserPlan interface to represent the full data structure in Firestore
+export interface UserPlan {
+  name: string;
+  email: string;
+  rows: PlannerRow[];
+  history?: HistoryEntry[]; // Added history support for persistence
+  plan: WeeklyPlan;
+  lastUpdated: any;
 }

@@ -1,4 +1,3 @@
-
 export enum DayOfWeek {
   Monday = 'Monday',
   Tuesday = 'Tuesday',
@@ -22,20 +21,12 @@ export interface PlannerRow {
   days: Record<DayOfWeek, DayState>;
 }
 
-export interface HistoryStats {
-  completionRate: number;
-  totalTasks: number;
-  completedTasks: number;
-  distribution: Record<PriorityGroup, number>;
-}
-
 export interface HistoryEntry {
   id: string;
   weekNumber: number;
   weekRange: string;
   timestamp: number;
   rows: PlannerRow[];
-  stats: HistoryStats;
 }
 
 export interface UserSettings {
@@ -46,18 +37,4 @@ export interface UserSettings {
   project: string;
   corsProxy?: string;
   useProxy?: boolean;
-}
-
-export interface DevOpsFeature {
-  id: number;
-  title: string;
-  priority: number;
-  state: string;
-  assignedTo: string;
-  comments: string[];
-  status?: {
-    summary: string;
-    completed: string[];
-    next: string[];
-  };
 }

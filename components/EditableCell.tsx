@@ -25,11 +25,11 @@ export const EditableCell: React.FC<EditableCellProps> = ({
   }, [text]);
 
   return (
-    <div className={`relative h-full min-h-[120px] transition-all duration-300 ${
+    <div className={`relative h-full min-h-[100px] transition-all duration-300 ${
       completed 
-        ? 'bg-emerald-100' 
+        ? 'bg-[#dcfce7]' 
         : text.trim() 
-          ? 'bg-rose-100' 
+          ? 'bg-[#fee2e2]' 
           : 'bg-transparent'
     }`}>
       {/* Cell Body */}
@@ -38,26 +38,28 @@ export const EditableCell: React.FC<EditableCellProps> = ({
         contentEditable={!isReadOnly}
         onBlur={() => onTextChange(contentRef.current?.innerText || "")}
         spellCheck={false}
-        className={`p-5 text-[12px] leading-relaxed outline-none min-h-[120px] break-words transition-all font-medium ${
-          completed ? 'text-emerald-900 line-through opacity-60' : 'text-slate-900'
-        } ${isReadOnly ? 'cursor-default' : 'cursor-text focus:bg-white focus:shadow-2xl focus:z-10 focus:ring-4 focus:ring-blue-50/50'}`}
+        className={`p-4 text-[12px] leading-relaxed outline-none min-h-[100px] break-words transition-all font-medium ${
+          completed ? 'text-emerald-900 line-through opacity-50' : 'text-slate-800'
+        } ${isReadOnly ? 'cursor-default' : 'cursor-text focus:bg-white focus:shadow-xl focus:z-10 focus:ring-4 focus:ring-blue-100/50'}`}
       />
 
-      {/* Completion Checkmark - Always visible if there is text */}
+      {/* Completion Indicator (Checkbox circle like in screenshot) */}
       {!isReadOnly && text.trim() && (
         <button
           onClick={onToggleComplete}
-          className={`absolute top-4 right-4 w-7 h-7 rounded-xl shadow-lg transition-all flex items-center justify-center border
+          className={`absolute top-3 right-3 w-6 h-6 rounded-full shadow-sm transition-all flex items-center justify-center border
             ${completed 
-              ? 'bg-emerald-600 text-white border-emerald-700 scale-110' 
-              : 'bg-white text-slate-300 hover:text-emerald-600 hover:border-emerald-300 border-slate-200'
+              ? 'bg-emerald-500 text-white border-emerald-600' 
+              : 'bg-white text-slate-300 hover:text-emerald-500 hover:border-emerald-300 border-slate-200'
             }
           `}
-          title={completed ? "Mark as Not Completed" : "Mark as Completed"}
+          title={completed ? "Mark Pending" : "Mark Complete"}
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/>
-          </svg>
+          {completed ? (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg>
+          ) : (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg>
+          )}
         </button>
       )}
     </div>
