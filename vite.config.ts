@@ -12,14 +12,17 @@ export default defineConfig(({ mode }) => {
       },
       plugins: [react()],
       define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+        // This ensures process.env.API_KEY is available in your code
+        'process.env.API_KEY': JSON.stringify(env.API_KEY || env.GEMINI_API_KEY),
       },
       resolve: {
         alias: {
-          // Use path.resolve('.') instead of __dirname to support ESM environments
           '@': path.resolve('.'),
         }
+      },
+      build: {
+        outDir: 'dist',
+        sourcemap: false
       }
     };
 });
