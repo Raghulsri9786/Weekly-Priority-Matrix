@@ -570,13 +570,29 @@ const App: React.FC = () => {
                           <td className="p-6 align-top">
                             <div className="flex flex-col gap-2">
                               <span className={`w-fit px-2 py-0.5 rounded text-[8px] font-black uppercase text-white ${group === 'P1' ? 'bg-rose-600' : group === 'P2' ? 'bg-amber-500' : group === 'P3' ? 'bg-slate-400' : 'bg-emerald-500'}`}>{group}</span>
-                              <div contentEditable={view === 'current'} onBlur={e => setRows(prev => prev.map(r => r.id === row.id ? { ...r, label: e.currentTarget.innerText } : r))} className="text-sm font-black text-slate-800 uppercase tracking-tight outline-none focus:text-blue-600 min-h-[1.5em] leading-tight" suppressContentEditableWarning>
+                              <div 
+                                contentEditable={view === 'current'} 
+                                onBlur={e => {
+                                  const newVal = e.currentTarget.innerText || "";
+                                  setRows(prev => prev.map(r => r.id === row.id ? { ...r, label: newVal } : r));
+                                }}
+                                className="text-sm font-black text-slate-800 uppercase tracking-tight outline-none focus:text-blue-600 min-h-[1.5em] leading-tight" 
+                                suppressContentEditableWarning
+                              >
                                 {row.label}
                               </div>
                             </div>
                           </td>
                           <td className="p-6 text-center align-middle">
-                            <div contentEditable={view === 'current'} onBlur={e => setRows(prev => prev.map(r => r.id === row.id ? { ...r, effortLabel: e.currentTarget.innerText } : r))} className="text-xs font-black text-slate-400 italic outline-none" suppressContentEditableWarning>
+                            <div 
+                              contentEditable={view === 'current'} 
+                              onBlur={e => {
+                                const newVal = e.currentTarget.innerText || "";
+                                setRows(prev => prev.map(r => r.id === row.id ? { ...r, effortLabel: newVal } : r));
+                              }}
+                              className="text-xs font-black text-slate-400 italic outline-none" 
+                              suppressContentEditableWarning
+                            >
                               {row.effortLabel}
                             </div>
                           </td>
