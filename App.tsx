@@ -37,6 +37,8 @@ const App: React.FC = () => {
 
   // DevOps States
   const [features, setFeatures] = useState<DevOpsFeature[]>([]);
+  // Added specific state to track the search query in the DevOps Workspace drawer
+  const [featureSearchTerm, setFeatureSearchTerm] = useState('');
   const [isDevOpsLoading, setIsDevOpsLoading] = useState(false);
   const [settings, setSettings] = useState<UserSettings>(() => {
     const saved = localStorage.getItem('matrix_settings');
@@ -172,13 +174,11 @@ const App: React.FC = () => {
   };
 
   const syncDevOps = async (isAuto = false) => {
-    // Safety check for user profile to prevent null access errors
     if (!user || !user.email) {
       if (!isAuto) alert("Identity not established. Please login again.");
       return;
     }
 
-    // Check for Personal Access Token (PAT) before proceeding with DevOps calls
     if (!settings.devOpsPat) {
       if (!isAuto) {
         alert("Please configure DevOps PAT in settings.");
@@ -193,19 +193,19 @@ const App: React.FC = () => {
     if (!isAuto) setIsFeatureDrawerOpen(true);
     
     try {
-      // Use configured PAT for Basic Auth (Azure DevOps requirement)
       const authHeader = `Basic ${btoa(`:${settings.devOpsPat}`)}`;
       const url = `https://dev.azure.com/${settings.organization}/${settings.project}/_apis/wit/wiql?api-version=6.0`;
       
-      // Ensure the proxy URL is correctly formed and parameters are encoded
-      const proxyUrl = settings.useProxy ? `${settings.corsProxy}${encodeURIComponent(url)}` : url;
+      let proxyPrefix = settings.corsProxy || 'https://corsproxy.io/?url=';
+      if (settings.useProxy && !proxyPrefix.includes('url=')) {
+        proxyPrefix += (proxyPrefix.includes('?') ? '&url=' : '?url=');
+      }
+      const proxyUrl = settings.useProxy ? `${proxyPrefix}${encodeURIComponent(url)}` : url;
 
-      // WIQL query restricted specifically to work items assigned to the current user's email
       const wiqlQuery = `SELECT [System.Id], [System.Title] FROM WorkItems WHERE [System.WorkItemType] = 'Feature' AND [System.State] <> 'Closed' AND [System.AssignedTo] CONTAINS '${user.email}'`;
 
       const res = await fetch(proxyUrl, {
         method: 'POST',
-        // mode: 'cors' is critical when using proxies to avoid 'Failed to fetch' errors
         mode: 'cors',
         headers: { 
           'Content-Type': 'application/json', 
@@ -216,17 +216,20 @@ const App: React.FC = () => {
       });
 
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        const errorText = await res.text().catch(() => 'No error detail');
+        throw new Error(`DevOps API Error (${res.status}): ${errorText.substring(0, 100)}...`);
       }
 
       const data = await res.json();
       
-      const ids = (data.workItems || []).slice(0, 50).map((wi: any) => wi.id);
+      // Update fetch limit to 200 items as per requirement
+      const ids = (data.workItems || []).slice(0, 200).map((wi: any) => wi.id);
+      
       if (ids.length > 0) {
-        const batchUrl = `https://dev.azure.com/${settings.organization}/_apis/wit/workitemsbatch?api-version=6.0`;
-        const batchProxy = settings.useProxy ? `${settings.corsProxy}${encodeURIComponent(batchUrl)}` : batchUrl;
+        const batchBaseUrl = `https://dev.azure.com/${settings.organization}/_apis/wit/workitemsbatch?api-version=6.0`;
+        const batchProxyUrl = settings.useProxy ? `${proxyPrefix}${encodeURIComponent(batchBaseUrl)}` : batchBaseUrl;
         
-        const details = await fetch(batchProxy, {
+        const details = await fetch(batchProxyUrl, {
           method: 'POST',
           mode: 'cors',
           headers: { 
@@ -234,63 +237,54 @@ const App: React.FC = () => {
             'Authorization': authHeader,
             'Accept': 'application/json'
           },
-          body: JSON.stringify({ ids, fields: ["System.Id", "System.Title", "Microsoft.VSTS.Common.Priority", "System.State"] })
+          body: JSON.stringify({ 
+            ids, 
+            fields: ["System.Id", "System.Title", "Microsoft.VSTS.Common.Priority", "System.State"] 
+          })
         });
 
         if (!details.ok) {
-          throw new Error(`Batch details failed: ${details.status}`);
+          throw new Error(`Batch Details Error: ${details.status}`);
         }
 
         const detailsData = await details.json();
-
-        // Fetch the most recent comment for each work item in the batch
         const featuresWithComments = await Promise.all((detailsData.value || []).map(async (f: any) => {
           const featureId = f.fields["System.Id"];
           let lastComment = "";
           try {
-            // Azure DevOps API: Fetching only the latest comment for the feature
             const commentUrl = `https://dev.azure.com/${settings.organization}/${settings.project}/_apis/wit/workitems/${featureId}/comments?$top=1&api-version=6.0-preview.3`;
             const commentProxy = settings.useProxy ? `${settings.corsProxy}${encodeURIComponent(commentUrl)}` : commentUrl;
-            const cRes = await fetch(commentProxy, { 
-              method: 'GET',
-              mode: 'cors',
-              headers: { 'Authorization': authHeader, 'Accept': 'application/json' } 
-            });
+            const cRes = await fetch(commentProxy, { method: 'GET', mode: 'cors', headers: { 'Authorization': authHeader, 'Accept': 'application/json' } });
             if (cRes.ok) {
               const cData = await cRes.json();
-              if (cData.comments && cData.comments.length > 0) {
-                // Remove HTML tags from the comment for clean presentation in the planner
-                lastComment = cData.comments[0].text.replace(/<[^>]*>?/gm, '');
-              }
+              if (cData.comments && cData.comments.length > 0) lastComment = cData.comments[0].text.replace(/<[^>]*>?/gm, '');
             }
-          } catch (e) {
-            console.error(`Failed to fetch latest comment for feature #${featureId}`, e);
-          }
-
+          } catch (e) { console.error(`Failed to fetch latest comment for feature #${featureId}`, e); }
           return {
             id: featureId,
             title: f.fields["System.Title"] || "Untitled",
             priority: f.fields["Microsoft.VSTS.Common.Priority"] || 3,
             state: f.fields["System.State"] || "Unknown",
             assignedTo: user.email,
-            // Storing the single latest comment in the comments array to maintain model compatibility
             comments: lastComment ? [lastComment] : []
           };
         }));
 
+        // Sort features by priority: P1 (1) > P2 (2) > P3 (3+)
+        featuresWithComments.sort((a, b) => a.priority - b.priority);
         setFeatures(featuresWithComments);
       } else {
         setFeatures([]);
       }
     } catch (e: any) {
-      console.error("DevOps Sync Error Detail:", e);
-      if (!isAuto) alert(`DevOps Sync Error: ${e.message}. Check your PAT and Proxy settings.`);
+      console.error("DevOps Sync detailed trace:", e);
+      const msg = e.message === 'Failed to fetch' ? "Network error. Please check your internet connection or try a different CORS proxy." : e.message;
+      if (!isAuto) alert(`DevOps Sync Failed: ${msg}`);
     } finally {
       setIsDevOpsLoading(false);
     }
   };
 
-  // Save updated settings to localStorage for persistence
   const saveSettings = (updatedSettings: UserSettings) => {
     setSettings(updatedSettings);
     localStorage.setItem('matrix_settings', JSON.stringify(updatedSettings));
@@ -298,22 +292,14 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    const handleFocus = () => {
-      if (userId && settings.devOpsPat) {
-        syncDevOps(true);
-      }
-    };
-
+    const handleFocus = () => { if (userId && settings.devOpsPat) syncDevOps(true); };
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
   }, [userId, settings.devOpsPat]);
 
   const handleLogout = () => {
     localStorage.removeItem('matrix_user_id');
-    setUserId(null);
-    setUser(null);
-    setRows([]);
-    setAllUsersPlans([]);
+    setUserId(null); setUser(null); setRows([]); setAllUsersPlans([]);
   };
 
   const filteredRows = useMemo(() => {
@@ -326,6 +312,26 @@ const App: React.FC = () => {
     if (!searchTerm) return filteredRows;
     return filteredRows.filter(r => r.label.toLowerCase().includes(searchTerm.toLowerCase()));
   }, [filteredRows, searchTerm]);
+
+  // Implemented real-time filtering for DevOps features list based on ID, Title, and Comment
+  const filteredFeatures = useMemo(() => {
+    // If no feature search term, return the full (already sorted) list
+    if (!featureSearchTerm.trim()) return features;
+    const term = featureSearchTerm.toLowerCase();
+    // Filter logic matches against Feature ID, Title, and the first comment text
+    return features.filter(f => 
+      f.id.toString().includes(term) || 
+      f.title.toLowerCase().includes(term) || 
+      (f.comments && f.comments[0] && f.comments[0].toLowerCase().includes(term))
+    );
+  }, [features, featureSearchTerm]);
+
+  const currentHistoryStats = useMemo(() => {
+    if (view === 'history' && selectedHistoryUser?.history?.[historyIndex]) {
+      return selectedHistoryUser.history[historyIndex].stats;
+    }
+    return null;
+  }, [historyIndex, view, selectedHistoryUser]);
 
   if (!userId) return <Login onLogin={setUserId} />;
   
@@ -401,7 +407,6 @@ const App: React.FC = () => {
           </div>
 
           <div className="pt-6">
-            {/* Action button to open settings interface */}
             <button onClick={() => setIsSettingsOpen(true)} className="w-full flex items-center gap-4 p-3 rounded-xl text-slate-400 hover:bg-slate-50 transition-all">
               <span className="text-lg">⚙️</span>
               {isSidebarOpen && <span className="text-[11px] font-black uppercase tracking-widest">Settings</span>}
@@ -465,19 +470,9 @@ const App: React.FC = () => {
                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Workload Balance • </p>
                    {view === 'current' ? (
                      <>
-                      <input 
-                        type="date" 
-                        value={startDate} 
-                        onChange={e => setStartDate(e.target.value)}
-                        className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-1 rounded-lg border-none outline-none cursor-pointer"
-                      />
+                      <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-1 rounded-lg border-none outline-none cursor-pointer" />
                       <span className="text-[10px] font-black text-slate-300">TO</span>
-                      <input 
-                        type="date" 
-                        value={endDate} 
-                        onChange={e => setEndDate(e.target.value)}
-                        className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-1 rounded-lg border-none outline-none cursor-pointer"
-                      />
+                      <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-1 rounded-lg border-none outline-none cursor-pointer" />
                      </>
                    ) : (
                      <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-3 py-1 rounded-lg">
@@ -497,6 +492,56 @@ const App: React.FC = () => {
               )}
             </div>
 
+            {view === 'history' && currentHistoryStats && (
+              <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-xl space-y-8 animate-in fade-in slide-in-from-top-4 duration-500">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-6">
+                  <div>
+                    <h2 className="text-[11px] font-black uppercase tracking-widest text-slate-500">Summary Snapshot</h2>
+                    <p className="text-[9px] text-slate-400 font-bold uppercase mt-1">Productivity distribution for the archived week</p>
+                  </div>
+                  <div className="flex items-center gap-6">
+                    <div className="text-center">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Total Tasks</p>
+                      <p className="text-2xl font-black text-slate-900">{currentHistoryStats.totalTasks}</p>
+                    </div>
+                    <div className="text-center px-6 border-x border-slate-100">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-emerald-600">Completed</p>
+                      <p className="text-2xl font-black text-emerald-600">{currentHistoryStats.completedTasks}</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-rose-600">Pending</p>
+                      <p className="text-2xl font-black text-rose-600">{currentHistoryStats.totalTasks - currentHistoryStats.completedTasks}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex justify-between items-end">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Performance Index</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-900">{currentHistoryStats.completionRate}% Efficiency</p>
+                  </div>
+                  <div className="h-6 w-full bg-slate-100 rounded-full overflow-hidden flex relative shadow-inner">
+                    <div 
+                      className="h-full bg-emerald-500 transition-all duration-1000"
+                      style={{ width: `${currentHistoryStats.completionRate}%` }}
+                    />
+                    <div 
+                      className="h-full bg-rose-500 transition-all duration-1000"
+                      style={{ width: `${100 - currentHistoryStats.completionRate}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between items-center text-[8px] font-black uppercase tracking-widest text-slate-400">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Completed
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-rose-500"></span> Pending / Not Completed
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-2xl shadow-slate-200/50 border-t-[12px] border-t-[#0f172a]">
               <table className="w-full border-collapse table-fixed">
                 <thead>
@@ -515,11 +560,7 @@ const App: React.FC = () => {
                       <tr className="bg-slate-50">
                         <td colSpan={8} className="px-6 py-2.5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 border-b border-slate-100">
                           <div className="flex items-center gap-2">
-                             <span className={`w-2 h-2 rounded-full ${
-                               group === 'P1' ? 'bg-rose-600' : 
-                               group === 'P2' ? 'bg-amber-500' : 
-                               group === 'P3' ? 'bg-slate-400' : 'bg-emerald-500'
-                             }`}></span>
+                             <span className={`w-2 h-2 rounded-full ${group === 'P1' ? 'bg-rose-600' : group === 'P2' ? 'bg-amber-500' : group === 'P3' ? 'bg-slate-400' : 'bg-emerald-500'}`}></span>
                              {group} Priority Section
                           </div>
                         </td>
@@ -528,80 +569,33 @@ const App: React.FC = () => {
                         <tr key={row.id} className="hover:bg-slate-50/50 transition-colors group divide-x divide-slate-100">
                           <td className="p-6 align-top">
                             <div className="flex flex-col gap-2">
-                              <span className={`w-fit px-2 py-0.5 rounded text-[8px] font-black uppercase text-white ${
-                                group === 'P1' ? 'bg-rose-600' : 
-                                group === 'P2' ? 'bg-amber-500' : 
-                                group === 'P3' ? 'bg-slate-400' : 'bg-emerald-500'
-                              }`}>{group}</span>
-                              <div 
-                                contentEditable={view === 'current'}
-                                onBlur={e => setRows(prev => prev.map(r => r.id === row.id ? { ...r, label: e.currentTarget.innerText } : r))}
-                                className="text-sm font-black text-slate-800 uppercase tracking-tight outline-none focus:text-blue-600 min-h-[1.5em] leading-tight"
-                                suppressContentEditableWarning
-                              >
+                              <span className={`w-fit px-2 py-0.5 rounded text-[8px] font-black uppercase text-white ${group === 'P1' ? 'bg-rose-600' : group === 'P2' ? 'bg-amber-500' : group === 'P3' ? 'bg-slate-400' : 'bg-emerald-500'}`}>{group}</span>
+                              <div contentEditable={view === 'current'} onBlur={e => setRows(prev => prev.map(r => r.id === row.id ? { ...r, label: e.currentTarget.innerText } : r))} className="text-sm font-black text-slate-800 uppercase tracking-tight outline-none focus:text-blue-600 min-h-[1.5em] leading-tight" suppressContentEditableWarning>
                                 {row.label}
                               </div>
                             </div>
                           </td>
                           <td className="p-6 text-center align-middle">
-                            <div
-                              contentEditable={view === 'current'}
-                              onBlur={e => setRows(prev => prev.map(r => r.id === row.id ? { ...r, effortLabel: e.currentTarget.innerText } : r))}
-                              className="text-xs font-black text-slate-400 italic outline-none"
-                              suppressContentEditableWarning
-                            >
+                            <div contentEditable={view === 'current'} onBlur={e => setRows(prev => prev.map(r => r.id === row.id ? { ...r, effortLabel: e.currentTarget.innerText } : r))} className="text-xs font-black text-slate-400 italic outline-none" suppressContentEditableWarning>
                               {row.effortLabel}
                             </div>
                           </td>
                           <td className="p-6 text-center align-middle">
-                             <span className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${
-                               group === 'P1' ? 'bg-rose-50 text-rose-600 border-rose-100' : 
-                               group === 'P2' ? 'bg-amber-50 text-amber-600 border-amber-100' : 
-                               group === 'P3' ? 'bg-blue-50 text-blue-600 border-blue-100' : 
-                               'bg-emerald-50 text-emerald-600 border-emerald-100'
-                             }`}>
+                             <span className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${row.priorityGroup === 'P1' ? 'bg-rose-50 text-rose-600 border-rose-100' : row.priorityGroup === 'P2' ? 'bg-amber-50 text-amber-600 border-amber-100' : row.priorityGroup === 'P3' ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
                                {group}
                              </span>
                           </td>
                           {Object.values(DayOfWeek).map(day => (
-                            <td 
-                              key={day} 
-                              className="p-0 align-top"
-                              // Implementing Drop logic for DevOps features
-                              onDragOver={e => e.preventDefault()}
-                              onDrop={e => {
-                                // Only allow drops in the current active view
+                            <td key={day} className="p-0 align-top" onDragOver={e => e.preventDefault()} onDrop={e => {
                                 if (view !== 'current') return;
                                 try {
-                                  // Parse the dropped feature data
                                   const feature = JSON.parse(e.dataTransfer.getData('application/json'));
-                                  // Extract feature metadata and last comment
-                                  const lastCommentText = feature.comments && feature.comments.length > 0 
-                                    ? `\n\nLatest Update:\n${feature.comments[0]}` 
-                                    : "";
-                                  // Construct the combined task text
+                                  const lastCommentText = feature.comments && feature.comments.length > 0 ? `\n\nLatest Update:\n${feature.comments[0]}` : "";
                                   const combinedTaskText = `[#${feature.id}] ${feature.title}${lastCommentText}`;
-                                  
-                                  // Update the grid state with the dropped feature's details
-                                  setRows(prev => prev.map(r => r.id === row.id ? { 
-                                    ...r, 
-                                    days: { 
-                                      ...r.days, 
-                                      [day]: { ...r.days[day], text: combinedTaskText } 
-                                    } 
-                                  } : r));
-                                } catch (err) {
-                                  console.error("Feature Drop Failed:", err);
-                                }
-                              }}
-                            >
-                              <EditableCell 
-                                text={row.days[day].text} 
-                                completed={row.days[day].completed} 
-                                onTextChange={text => setRows(prev => prev.map(r => r.id === row.id ? { ...r, days: { ...r.days, [day]: { ...r.days[day], text } } } : r))}
-                                onToggleComplete={() => setRows(prev => prev.map(r => r.id === row.id ? { ...r, days: { ...r.days, [day]: { ...r.days[day], completed: !r.days[day].completed } } } : r))}
-                                isReadOnly={view !== 'current'}
-                              />
+                                  setRows(prev => prev.map(r => r.id === row.id ? { ...r, days: { ...r.days, [day]: { ...r.days[day], text: combinedTaskText } } } : r));
+                                } catch (err) { console.error("Feature Drop Failed:", err); }
+                              }}>
+                              <EditableCell text={row.days[day].text} completed={row.days[day].completed} onTextChange={text => setRows(prev => prev.map(r => r.id === row.id ? { ...r, days: { ...r.days, [day]: { ...r.days[day], text } } } : r))} onToggleComplete={() => setRows(prev => prev.map(r => r.id === row.id ? { ...r, days: { ...r.days, [day]: { ...r.days[day], completed: !row.days[day].completed } } } : r))} isReadOnly={view !== 'current'} />
                             </td>
                           ))}
                         </tr>
@@ -609,10 +603,7 @@ const App: React.FC = () => {
                       {view === 'current' && (
                         <tr>
                           <td colSpan={8} className="p-0">
-                            <button 
-                              onClick={() => addRow(group)} 
-                              className="w-full py-2.5 text-[9px] font-black uppercase tracking-[0.3em] text-slate-300 hover:text-blue-600 hover:bg-slate-50 transition-all flex items-center justify-center gap-2 border-none outline-none"
-                            >
+                            <button onClick={() => addRow(group)} className="w-full py-2.5 text-[9px] font-black uppercase tracking-[0.3em] text-slate-300 hover:text-blue-600 hover:bg-slate-50 transition-all flex items-center justify-center gap-2 border-none outline-none">
                               <span className="text-base font-light">+</span> Add Row to {group}
                             </button>
                           </td>
@@ -635,28 +626,28 @@ const App: React.FC = () => {
                 </div>
                 <button onClick={() => setIsFeatureDrawerOpen(false)} className="p-2 hover:bg-slate-200 rounded-full text-slate-400 transition-all text-xl">✕</button>
              </div>
-             
              <div className="p-4 border-b border-slate-100 space-y-3">
                <div className="relative">
-                 <input type="text" placeholder="Search features..." className="w-full pl-9 pr-4 py-2 bg-slate-100/50 border border-slate-200 rounded-xl text-[11px] font-bold outline-none focus:ring-2 focus:ring-blue-100 transition-all" />
+                 {/* Hooked up the search input to the featureSearchTerm state for real-time filtering */}
+                 <input 
+                   type="text" 
+                   placeholder="Search features..." 
+                   value={featureSearchTerm}
+                   onChange={e => setFeatureSearchTerm(e.target.value)}
+                   className="w-full pl-9 pr-4 py-2 bg-slate-100/50 border border-slate-200 rounded-xl text-[11px] font-bold outline-none focus:ring-2 focus:ring-blue-100 transition-all" 
+                 />
                  <svg className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" strokeWidth="2" strokeLinecap="round"/></svg>
                </div>
              </div>
-
              <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50 custom-scrollbar">
-                {features.map(f => (
-                   <div 
-                     key={f.id} 
-                     draggable 
-                     onDragStart={e => e.dataTransfer.setData('application/json', JSON.stringify(f))}
-                     className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-xl hover:border-blue-400 cursor-grab transition-all group"
-                   >
+                {/* Iterating over the filtered list of features derived from the search input */}
+                {filteredFeatures.map(f => (
+                   <div key={f.id} draggable onDragStart={e => e.dataTransfer.setData('application/json', JSON.stringify(f))} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-xl hover:border-blue-400 cursor-grab transition-all group">
                       <div className="flex justify-between items-start mb-2">
                          <span className="text-[10px] font-black text-blue-500">#{f.id}</span>
                          <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${f.priority === 1 ? 'bg-rose-100 text-rose-600' : 'bg-slate-100 text-slate-500'}`}>P{f.priority}</span>
                       </div>
                       <p className="text-sm font-black text-slate-800 leading-tight group-hover:text-blue-600 transition-colors uppercase">{f.title}</p>
-                      {/* Visual indicator of existing last comment in the drawer */}
                       {f.comments && f.comments.length > 0 && (
                         <div className="mt-2 pt-2 border-t border-slate-50">
                           <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Last Comment</p>
@@ -665,9 +656,9 @@ const App: React.FC = () => {
                       )}
                    </div>
                 ))}
-                {features.length === 0 && !isDevOpsLoading && (
+                {filteredFeatures.length === 0 && !isDevOpsLoading && (
                    <div className="text-center py-20 text-slate-300">
-                      <p className="text-[10px] font-black uppercase tracking-widest">No personal tasks found</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest">No matching features found</p>
                    </div>
                 )}
              </div>
@@ -675,83 +666,43 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* Configuration interface for user identity and DevOps Personal Access Token (PAT) */}
       {isSettingsOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-6 animate-in fade-in duration-300">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-6 animate-in fade-in zoom-in duration-300">
           <div className="bg-white rounded-[3rem] w-full max-w-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
             <div className="p-10 bg-slate-950 text-white flex justify-between items-center relative">
-               <div>
-                  <h3 className="text-2xl font-black uppercase tracking-tighter italic">Personal Configuration</h3>
-               </div>
+               <div><h3 className="text-2xl font-black uppercase tracking-tighter italic">Personal Configuration</h3></div>
                <button onClick={() => setIsSettingsOpen(false)} className="p-4 bg-white/10 rounded-full hover:bg-white/20 transition-all text-xl">✕</button>
             </div>
             <div className="p-10 space-y-8 bg-white">
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block pl-1">Full Name</label>
-                  <input 
-                    type="text" 
-                    value={settings.userName} 
-                    onChange={e => setSettings({...settings, userName: e.target.value})} 
-                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none" 
-                    placeholder="John Doe" 
-                  />
+                  <input type="text" value={settings.userName} onChange={e => setSettings({...settings, userName: e.target.value})} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none" placeholder="John Doe" />
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block pl-1">Identity Email</label>
-                  <input 
-                    type="text" 
-                    value={settings.companyEmail} 
-                    onChange={e => setSettings({...settings, companyEmail: e.target.value})} 
-                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none" 
-                    placeholder="user@aptean.com" 
-                  />
+                  <input type="text" value={settings.companyEmail} onChange={e => setSettings({...settings, companyEmail: e.target.value})} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none" placeholder="user@aptean.com" />
                 </div>
               </div>
-              
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block pl-1">DevOps PAT (Private Token)</label>
-                <input 
-                  type="password" 
-                  value={settings.devOpsPat} 
-                  onChange={e => setSettings({...settings, devOpsPat: e.target.value})} 
-                  className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none" 
-                  placeholder="Paste your Azure DevOps PAT here" 
-                />
+                <input type="password" value={settings.devOpsPat} onChange={e => setSettings({...settings, devOpsPat: e.target.value})} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none" placeholder="Paste your Azure DevOps PAT here" />
               </div>
-
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block pl-1">Organization</label>
-                  <input 
-                    type="text" 
-                    value={settings.organization} 
-                    onChange={e => setSettings({...settings, organization: e.target.value})} 
-                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none" 
-                  />
+                  <input type="text" value={settings.organization} onChange={e => setSettings({...settings, organization: e.target.value})} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none" />
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block pl-1">Project Name</label>
-                  <input 
-                    type="text" 
-                    value={settings.project} 
-                    onChange={e => setSettings({...settings, project: e.target.value})} 
-                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none" 
-                  />
+                  <input type="text" value={settings.project} onChange={e => setSettings({...settings, project: e.target.value})} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none" />
                 </div>
               </div>
-
               <div className="pt-4 space-y-4">
                 <div className="flex items-center justify-between"><label className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Use CORS Proxy</label><button onClick={() => setSettings({...settings, useProxy: !settings.useProxy})} className={`w-12 h-6 rounded-full transition-colors relative ${settings.useProxy ? 'bg-blue-600' : 'bg-slate-200'}`}><div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${settings.useProxy ? 'left-7' : 'left-1'}`} /></button></div>
                 {settings.useProxy && <div className="space-y-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block pl-1">Proxy URL</label><input type="text" value={settings.corsProxy} onChange={e => setSettings({...settings, corsProxy: e.target.value})} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-[10px] font-mono outline-none" placeholder="https://corsproxy.io/?url=" /></div>}
               </div>
-
-              <button 
-                onClick={() => saveSettings(settings)} 
-                className="w-full py-5 bg-slate-950 text-white rounded-3xl font-black uppercase tracking-[0.2em] hover:bg-slate-900 shadow-2xl transition-all"
-              >
-                Save Identity Configuration
-              </button>
+              <button onClick={() => saveSettings(settings)} className="w-full py-5 bg-slate-950 text-white rounded-3xl font-black uppercase tracking-[0.2em] hover:bg-slate-900 shadow-2xl transition-all">Save Identity Configuration</button>
             </div>
           </div>
         </div>
