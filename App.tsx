@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { DayOfWeek, PlannerRow, PriorityGroup, HistoryEntry, DevOpsFeature, UserSettings, HistoryStats, DayState } from './types';
@@ -31,7 +32,8 @@ const MatrixBoard: React.FC<{
   handleStartDateChange: (val: string) => void;
   handleDeploy: () => void;
   handleUpdateArchive: () => void;
-  syncDevOps: (auto?: boolean) => void;
+  // MODIFIED: syncDevOps now accepts a type string
+  syncDevOps: (auto?: boolean, typeOverride?: string) => void;
   isSyncing: boolean;
   isDevOpsLoading: boolean;
   features: DevOpsFeature[];
@@ -55,8 +57,10 @@ const MatrixBoard: React.FC<{
   setIsEditingHistory: (b: boolean) => void;
   expandedUserFolderId: string | null;
   setExpandedUserFolderId: (s: string | null) => void;
+  // ADDED: props for devops type filtering
+  selectedDevOpsType: string;
+  setSelectedDevOpsType: (t: 'Feature' | 'Epic' | 'User Story') => void;
 }> = (props) => {
-  // FIXED: Destructured missing setStartDate and setEndDate from props and ensured correct comma placement to resolve potential syntax errors
   const { 
     userId, user, rows, setRows, history, setHistory, allUsersPlans, setAllUsersPlans,
     handleLogout, settings, setSettings, setIsSettingsOpen, isSettingsOpen, saveSettings,
@@ -65,7 +69,8 @@ const MatrixBoard: React.FC<{
     featureSearchTerm, setFeatureSearchTerm, isFeatureDrawerOpen, setIsFeatureDrawerOpen,
     isAssistantOpen, setIsAssistantOpen, searchTerm, setSearchTerm, isSidebarOpen, setIsSidebarOpen,
     view, setView, historyIndex, setHistoryIndex, selectedHistoryUser, setSelectedHistoryUser,
-    isEditingHistory, setIsEditingHistory, expandedUserFolderId, setExpandedUserFolderId
+    isEditingHistory, setIsEditingHistory, expandedUserFolderId, setExpandedUserFolderId,
+    selectedDevOpsType, setSelectedDevOpsType
   } = props;
 
   const filteredRows = useMemo(() => {
@@ -478,15 +483,31 @@ const MatrixBoard: React.FC<{
                <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                   <div>
                      <h3 className="text-[11px] font-black uppercase tracking-widest text-slate-500">DevOps Workspace</h3>
-                     <p className="text-[9px] text-slate-400 font-bold uppercase mt-1">My Assigned Features</p>
+                     <p className="text-[9px] text-slate-400 font-bold uppercase mt-1">My Assigned {selectedDevOpsType}s</p>
                   </div>
                   <button onClick={() => setIsFeatureDrawerOpen(false)} className="p-2 hover:bg-slate-200 rounded-full text-slate-400 transition-all text-xl">✕</button>
                </div>
+               
+               {/* ADDED: Toggle Buttons for WorkItemType */}
+               <div className="px-6 py-4 border-b border-slate-100 bg-white">
+                 <div className="flex gap-1 p-1 bg-slate-100 rounded-xl">
+                   {(['Feature', 'Epic', 'User Story'] as const).map((type) => (
+                     <button
+                       key={type}
+                       onClick={() => setSelectedDevOpsType(type)}
+                       className={`flex-1 py-2 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${selectedDevOpsType === type ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                     >
+                       {type}
+                     </button>
+                   ))}
+                 </div>
+               </div>
+
                <div className="p-4 border-b border-slate-100 space-y-3">
                  <div className="relative">
                    <input 
                      type="text" 
-                     placeholder="Search features..." 
+                     placeholder="Search context..." 
                      value={featureSearchTerm}
                      onChange={e => setFeatureSearchTerm(e.target.value)}
                      className="w-full pl-9 pr-4 py-2 bg-slate-100/50 border border-slate-200 rounded-xl text-[11px] font-bold outline-none focus:ring-2 focus:ring-blue-100 transition-all" 
@@ -510,6 +531,9 @@ const MatrixBoard: React.FC<{
                         )}
                      </div>
                   ))}
+                  {filteredFeatures.length === 0 && !isDevOpsLoading && (
+                    <div className="py-10 text-center text-[10px] font-black text-slate-300 uppercase italic">No {selectedDevOpsType}s assigned</div>
+                  )}
                </div>
             </aside>
           )}
@@ -586,6 +610,8 @@ const App: React.FC = () => {
   const [features, setFeatures] = useState<DevOpsFeature[]>([]);
   const [featureSearchTerm, setFeatureSearchTerm] = useState('');
   const [isDevOpsLoading, setIsDevOpsLoading] = useState(false);
+  // ADDED: state for selected DevOps work item type
+  const [selectedDevOpsType, setSelectedDevOpsType] = useState<'Feature' | 'Epic' | 'User Story'>('Feature');
   const [settings, setSettings] = useState<UserSettings>(() => {
     const saved = localStorage.getItem('matrix_settings');
     const defaults = {
@@ -630,6 +656,13 @@ const App: React.FC = () => {
       });
     }
   }, [userId]);
+
+  // ADDED: Re-fetch when the selected DevOps type changes
+  useEffect(() => {
+    if (user && isFeatureDrawerOpen) {
+      syncDevOps(false);
+    }
+  }, [selectedDevOpsType]);
 
   const handleDeploy = async () => {
     if (!userId) return;
@@ -709,29 +742,49 @@ const App: React.FC = () => {
     return { totalTasks, completedTasks, completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0, distribution };
   };
 
-  const syncDevOps = async (isAuto = false) => {
+  // MODIFIED: Added typeOverride parameter and fixed the fetch logic
+  const syncDevOps = async (isAuto = false, typeOverride?: string) => {
     if (!user || !user.email || !settings.devOpsPat) return;
     setIsDevOpsLoading(true);
     if (!isAuto) setIsFeatureDrawerOpen(true);
     try {
+      // PRESERVED: Use existing PAT and proxy logic
       const authHeader = `Basic ${btoa(`:${settings.devOpsPat}`)}`;
       const url = `https://dev.azure.com/${settings.organization}/${settings.project}/_apis/wit/wiql?api-version=6.0`;
       const proxyPrefix = settings.corsProxy || 'https://corsproxy.io/?url=';
       const proxyUrl = settings.useProxy ? `${proxyPrefix}${encodeURIComponent(url)}` : url;
-      const wiqlQuery = `SELECT TOP 200 [System.Id], [System.Title] FROM WorkItems WHERE [System.WorkItemType] = 'Feature' AND [System.State] <> 'Closed' AND [System.AssignedTo] CONTAINS '${user.email}'`;
-      const res = await fetch(proxyUrl, { method: 'POST', mode: 'cors', headers: { 'Content-Type': 'application/json', 'Authorization': authHeader }, body: JSON.stringify({ query: wiqlQuery }) });
+      
+      // FIXED: Dynamic WorkItemType and improved state filter for reliable fetching
+      const currentType = typeOverride || selectedDevOpsType;
+      // Fixed query to fetch assigned items correctly and handle "User Story" with spaces properly in WIQL
+      const wiqlQuery = `SELECT [System.Id], [System.Title] FROM WorkItems WHERE [System.WorkItemType] = '${currentType}' AND [System.State] NOT IN ('Closed', 'Removed', 'Done') AND [System.AssignedTo] CONTAINS '${user.email}'`;
+      
+      const res = await fetch(proxyUrl, { 
+        method: 'POST', 
+        mode: 'cors', 
+        headers: { 'Content-Type': 'application/json', 'Authorization': authHeader }, 
+        body: JSON.stringify({ query: wiqlQuery }) 
+      });
+      
       const data = await res.json();
-      const ids = (data.workItems || []).slice(0, 200).map((wi: any) => wi.id);
+      const ids = (data.workItems || []).slice(0, 100).map((wi: any) => wi.id);
+      
       if (ids.length > 0) {
         const batchBaseUrl = `https://dev.azure.com/${settings.organization}/_apis/wit/workitemsbatch?api-version=6.0`;
         const batchProxyUrl = settings.useProxy ? `${proxyPrefix}${encodeURIComponent(batchBaseUrl)}` : batchBaseUrl;
-        const details = await fetch(batchProxyUrl, { method: 'POST', mode: 'cors', headers: { 'Content-Type': 'application/json', 'Authorization': authHeader }, body: JSON.stringify({ ids, fields: ["System.Id", "System.Title", "Microsoft.VSTS.Common.Priority", "System.State"] }) });
+        const details = await fetch(batchProxyUrl, { 
+          method: 'POST', 
+          mode: 'cors', 
+          headers: { 'Content-Type': 'application/json', 'Authorization': authHeader }, 
+          body: JSON.stringify({ ids, fields: ["System.Id", "System.Title", "Microsoft.VSTS.Common.Priority", "System.State"] }) 
+        });
+        
         const detailsData = await details.json();
-        const featuresWithComments = await Promise.all((detailsData.value || []).map(async (f: any) => {
-          const featureId = f.fields["System.Id"];
+        const itemsWithComments = await Promise.all((detailsData.value || []).map(async (f: any) => {
+          const itemId = f.fields["System.Id"];
           let lastComment = "";
           try {
-            const commentUrl = `https://dev.azure.com/${settings.organization}/${settings.project}/_apis/wit/workitems/${featureId}/comments?$top=1&api-version=6.0-preview.3`;
+            const commentUrl = `https://dev.azure.com/${settings.organization}/${settings.project}/_apis/wit/workitems/${itemId}/comments?$top=1&api-version=6.0-preview.3`;
             const commentProxy = settings.useProxy ? `${settings.corsProxy}${encodeURIComponent(commentUrl)}` : commentUrl;
             const cRes = await fetch(commentProxy, { method: 'GET', mode: 'cors', headers: { 'Authorization': authHeader, 'Accept': 'application/json' } });
             if (cRes.ok) {
@@ -739,12 +792,25 @@ const App: React.FC = () => {
               if (cData.comments && cData.comments.length > 0) lastComment = cData.comments[0].text.replace(/<[^>]*>?/gm, '');
             }
           } catch (e) {}
-          return { id: featureId, title: f.fields["System.Title"] || "Untitled", priority: f.fields["Microsoft.VSTS.Common.Priority"] || 3, state: f.fields["System.State"] || "Unknown", assignedTo: user.email, comments: lastComment ? [lastComment] : [] };
+          return { 
+            id: itemId, 
+            title: f.fields["System.Title"] || "Untitled", 
+            priority: f.fields["Microsoft.VSTS.Common.Priority"] || 3, 
+            state: f.fields["System.State"] || "Unknown", 
+            assignedTo: user.email, 
+            comments: lastComment ? [lastComment] : [] 
+          };
         }));
-        featuresWithComments.sort((a, b) => a.priority - b.priority);
-        setFeatures(featuresWithComments);
+        itemsWithComments.sort((a, b) => a.priority - b.priority);
+        setFeatures(itemsWithComments);
+      } else {
+        setFeatures([]);
       }
-    } catch (e) {} finally { setIsDevOpsLoading(false); }
+    } catch (e) {
+      console.error("DevOps Fetch Error:", e);
+    } finally {
+      setIsDevOpsLoading(false);
+    }
   };
 
   const saveSettings = (updatedSettings: UserSettings) => {
@@ -790,6 +856,9 @@ const App: React.FC = () => {
                 setSelectedHistoryUser={setSelectedHistoryUser} isEditingHistory={isEditingHistory}
                 setIsEditingHistory={setIsEditingHistory} expandedUserFolderId={expandedUserFolderId}
                 setExpandedUserFolderId={setExpandedUserFolderId}
+                // ADDED: props for devops filtering
+                selectedDevOpsType={selectedDevOpsType}
+                setSelectedDevOpsType={setSelectedDevOpsType}
               />
             )
           } 
