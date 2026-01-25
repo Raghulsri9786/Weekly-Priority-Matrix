@@ -50,6 +50,34 @@ const App: React.FC = () => {
     return saved ? { ...defaults, ...JSON.parse(saved) } : defaults;
   });
 
+  // Added: Targeted logic enhancement for auto-calculating Friday End Date if Start Date is Monday
+  const handleStartDateChange = (val: string) => {
+    // 1. Update the local state for Start Date normally
+    setStartDate(val);
+    
+    // 2. Parse the date components (YYYY-MM-DD) carefully to handle local time correctly
+    const parts = val.split('-').map(Number);
+    if (parts.length === 3) {
+      // Create a local date object (Month is 0-indexed: parts[1] - 1)
+      const dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
+      
+      // 3. Logic check: getDay() returns 1 for Monday
+      if (dateObj.getDay() === 1) {
+        // Automatically calculate Friday of the same week (Monday + 4 days)
+        const fridayDate = new Date(dateObj);
+        fridayDate.setDate(dateObj.getDate() + 4);
+        
+        // 4. Format back to YYYY-MM-DD string for input value
+        const fYear = fridayDate.getFullYear();
+        const fMonth = String(fridayDate.getMonth() + 1).padStart(2, '0');
+        const fDay = String(fridayDate.getDate()).padStart(2, '0');
+        
+        // 5. Set the End Date programmatically
+        setEndDate(`${fYear}-${fMonth}-${fDay}`);
+      }
+    }
+  };
+
   // Load Data on Login
   useEffect(() => {
     if (userId) {
@@ -470,7 +498,8 @@ const App: React.FC = () => {
                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Workload Balance • </p>
                    {view === 'current' ? (
                      <>
-                      <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-1 rounded-lg border-none outline-none cursor-pointer" />
+                      {/* Modified: Start Date input now uses handleStartDateChange logic to automatically set End Date to Friday when Monday is selected */}
+                      <input type="date" value={startDate} onChange={e => handleStartDateChange(e.target.value)} className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-1 rounded-lg border-none outline-none cursor-pointer" />
                       <span className="text-[10px] font-black text-slate-300">TO</span>
                       <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-1 rounded-lg border-none outline-none cursor-pointer" />
                      </>
