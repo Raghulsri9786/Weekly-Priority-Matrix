@@ -7,6 +7,8 @@ import { ChatBot } from './components/ChatBot';
 import { Login } from './components/Login';
 import WeeklyPlanPage from './components/WeeklyPlanPage';
 import { getPlan, updatePlan, getAllPlans } from './services/firebase';
+// ENHANCEMENT: Imported XLSX for Excel generation capabilities
+import * as XLSX from 'xlsx';
 
 const PRIORITY_ORDER: PriorityGroup[] = ['P1', 'P2', 'P3', 'Meeting'];
 
@@ -32,7 +34,7 @@ const MatrixBoard: React.FC<{
   handleStartDateChange: (val: string) => void;
   handleDeploy: () => void;
   handleUpdateArchive: () => void;
-  // MODIFIED: syncDevOps now accepts a type string
+  handleExport: () => void;
   syncDevOps: (auto?: boolean, typeOverride?: string) => void;
   isSyncing: boolean;
   isDevOpsLoading: boolean;
@@ -57,7 +59,6 @@ const MatrixBoard: React.FC<{
   setIsEditingHistory: (b: boolean) => void;
   expandedUserFolderId: string | null;
   setExpandedUserFolderId: (s: string | null) => void;
-  // ADDED: props for devops type filtering
   selectedDevOpsType: string;
   setSelectedDevOpsType: (t: 'Feature' | 'Epic' | 'User Story') => void;
 }> = (props) => {
@@ -65,7 +66,7 @@ const MatrixBoard: React.FC<{
     userId, user, rows, setRows, history, setHistory, allUsersPlans, setAllUsersPlans,
     handleLogout, settings, setSettings, setIsSettingsOpen, isSettingsOpen, saveSettings,
     startDate, endDate, setStartDate, setEndDate, handleStartDateChange, handleDeploy,
-    handleUpdateArchive, syncDevOps, isSyncing, isDevOpsLoading, features,
+    handleUpdateArchive, handleExport, syncDevOps, isSyncing, isDevOpsLoading, features,
     featureSearchTerm, setFeatureSearchTerm, isFeatureDrawerOpen, setIsFeatureDrawerOpen,
     isAssistantOpen, setIsAssistantOpen, searchTerm, setSearchTerm, isSidebarOpen, setIsSidebarOpen,
     view, setView, historyIndex, setHistoryIndex, selectedHistoryUser, setSelectedHistoryUser,
@@ -229,6 +230,16 @@ const MatrixBoard: React.FC<{
               <svg className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" strokeWidth="2" strokeLinecap="round"/></svg>
             </div>
             
+            <button 
+              onClick={handleExport} 
+              className="p-2.5 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 transition-all shadow-sm flex items-center justify-center group" 
+              title="Download Weekly Report"
+            >
+              <svg className="w-5 h-5 text-slate-500 group-hover:text-blue-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+              </svg>
+            </button>
+
             <button onClick={() => syncDevOps()} className="px-6 py-2.5 bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg shadow-blue-100">
               {isDevOpsLoading ? 'Syncing...' : 'Sync Features'}
             </button>
@@ -488,7 +499,6 @@ const MatrixBoard: React.FC<{
                   <button onClick={() => setIsFeatureDrawerOpen(false)} className="p-2 hover:bg-slate-200 rounded-full text-slate-400 transition-all text-xl">✕</button>
                </div>
                
-               {/* ADDED: Toggle Buttons for WorkItemType */}
                <div className="px-6 py-4 border-b border-slate-100 bg-white">
                  <div className="flex gap-1 p-1 bg-slate-100 rounded-xl">
                    {(['Feature', 'Epic', 'User Story'] as const).map((type) => (
@@ -610,7 +620,6 @@ const App: React.FC = () => {
   const [features, setFeatures] = useState<DevOpsFeature[]>([]);
   const [featureSearchTerm, setFeatureSearchTerm] = useState('');
   const [isDevOpsLoading, setIsDevOpsLoading] = useState(false);
-  // ADDED: state for selected DevOps work item type
   const [selectedDevOpsType, setSelectedDevOpsType] = useState<'Feature' | 'Epic' | 'User Story'>('Feature');
   const [settings, setSettings] = useState<UserSettings>(() => {
     const saved = localStorage.getItem('matrix_settings');
@@ -657,7 +666,6 @@ const App: React.FC = () => {
     }
   }, [userId]);
 
-  // ADDED: Re-fetch when the selected DevOps type changes
   useEffect(() => {
     if (user && isFeatureDrawerOpen) {
       syncDevOps(false);
@@ -726,6 +734,136 @@ const App: React.FC = () => {
     }
   };
 
+  // ENHANCEMENT: Implemented Excel export logic with legacy layout styling (colors, borders, and wrapping)
+  const handleExport = () => {
+    if (!user) return;
+
+    // Determine target rows and label based on active view to fix archive export bug
+    let exportRows = rows;
+    let rangeLabel = `${startDate}_to_${endDate}`;
+
+    if (view === 'history') {
+      const activeHistory = (selectedHistoryUser?.id === userId) ? history : (selectedHistoryUser?.history || []);
+      const archiveEntry = activeHistory[historyIndex];
+      if (archiveEntry) {
+        exportRows = archiveEntry.rows;
+        // FORMAT: Replace ' TO ' with '_to_' from saved weekRange
+        rangeLabel = archiveEntry.weekRange.replace(/\s+TO\s+/g, '_to_');
+      }
+    }
+
+    // PART 1 – PRIORITY ORDER IN EXCEL: Sort exported rows by P1, P2, P3, Meeting to follow legacy sectioning
+    const PRIORITY_RANK: Record<string, number> = { 'P1': 1, 'P2': 2, 'P3': 3, 'Meeting': 4 };
+    const sortedExportRows = [...exportRows].sort((a, b) => 
+      (PRIORITY_RANK[a.priorityGroup] || 99) - (PRIORITY_RANK[b.priorityGroup] || 99)
+    );
+
+    const exportData = sortedExportRows.map(row => {
+      const rowData: any = {
+        'Activity Layer': row.label,
+        'Target %': row.effortLabel,
+        'Priority': row.priorityGroup
+      };
+
+      Object.values(DayOfWeek).forEach(day => {
+        const dayState = row.days[day];
+        // PART 1 – CLEAN CELL TEXT: Remove "[COMPLETED]" prefixes for cleaner report
+        rowData[day] = dayState.text || '';
+      });
+
+      return rowData;
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    
+    // LEGACY LAYOUT: Configure column widths for readability as requested in Part 1
+    worksheet['!cols'] = [
+      { wch: 40 }, // Activity Layer
+      { wch: 10 }, // Target %
+      { wch: 10 }, // Priority
+      { wch: 50 }, // Monday
+      { wch: 50 }, // Tuesday
+      { wch: 50 }, // Wednesday
+      { wch: 50 }, // Thursday
+      { wch: 50 }, // Friday
+    ];
+    
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:A1');
+    
+    // PART 2 & 4 – COLORING, BORDERS AND WRAPPING (Data Rows)
+    for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+      const rowObj = sortedExportRows[R - 1]; // Correct offset for 0-based array index
+
+      for (let C = 0; C <= 7; ++C) {
+        const cell_address = XLSX.utils.encode_cell({c: C, r: R});
+        if (!worksheet[cell_address]) {
+           worksheet[cell_address] = { t: 's', v: '' }; 
+        }
+        
+        const isTaskColumn = C >= 3 && C <= 7;
+        let isCompleted = false;
+        
+        if (isTaskColumn) {
+          const dayKey = Object.values(DayOfWeek)[C - 3];
+          isCompleted = rowObj.days[dayKey].completed;
+        }
+
+        // Apply styles to all data cells
+        worksheet[cell_address].s = {
+          // PART 2 – COLOR DIFFERENTIATION: Background fill based on status (Light Green for completed, Light Red for pending)
+          fill: isTaskColumn ? {
+            patternType: "solid",
+            fgColor: { rgb: isCompleted ? "C6EFCE" : "FFC7CE" }
+          } : undefined,
+          // PART 2 – COLOR DIFFERENTIATION: Text color based on status (Dark Green for completed, Dark Red for pending)
+          font: {
+            color: isTaskColumn ? { rgb: isCompleted ? "006100" : "9C0006" } : { rgb: "0F172A" }
+          },
+          // PART 4 – CELL READABILITY: Wrap text and top alignment
+          alignment: {
+            wrapText: true,
+            vertical: "top",
+            horizontal: isTaskColumn ? "left" : "center"
+          },
+          // PART 4 – BORDERS: Thin borders for all visible cells
+          border: {
+            top: { style: "thin", color: { rgb: "E2E8F0" } },
+            bottom: { style: "thin", color: { rgb: "E2E8F0" } },
+            left: { style: "thin", color: { rgb: "E2E8F0" } },
+            right: { style: "thin", color: { rgb: "E2E8F0" } }
+          }
+        };
+      }
+    }
+
+    // PART 3 – HEADER FORMATTING: Gray background, Bold, and Centered
+    for (let C = 0; C <= 7; ++C) {
+      const cell_address = XLSX.utils.encode_cell({c: C, r: 0});
+      if (worksheet[cell_address]) {
+        worksheet[cell_address].s = {
+          fill: { patternType: "solid", fgColor: { rgb: "F1F5F9" } }, // Light Gray background
+          font: { bold: true, color: { rgb: "0F172A" } }, // Bold Header text
+          alignment: { horizontal: "center", vertical: "center" }, // Centered titles
+          border: {
+            top: { style: "thin", color: { rgb: "CBD5E1" } },
+            bottom: { style: "medium", color: { rgb: "0F172A" } },
+            left: { style: "thin", color: { rgb: "CBD5E1" } },
+            right: { style: "thin", color: { rgb: "CBD5E1" } }
+          }
+        };
+      }
+    }
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Weekly Plan");
+
+    const cleanUserName = user.name.replace(/\s+/g, '_');
+    // FILE NAME FORMAT: <LoggedInUserName>_WeeklyPlan_<StartDate>_to_<EndDate>.xlsx
+    const fileName = `${cleanUserName}_WeeklyPlan_${rangeLabel}.xlsx`;
+
+    XLSX.writeFile(workbook, fileName);
+  };
+
   const calculateStats = (matrixRows: PlannerRow[]): HistoryStats => {
     let totalTasks = 0;
     let completedTasks = 0;
@@ -742,21 +880,17 @@ const App: React.FC = () => {
     return { totalTasks, completedTasks, completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0, distribution };
   };
 
-  // MODIFIED: Added typeOverride parameter and fixed the fetch logic
   const syncDevOps = async (isAuto = false, typeOverride?: string) => {
     if (!user || !user.email || !settings.devOpsPat) return;
     setIsDevOpsLoading(true);
     if (!isAuto) setIsFeatureDrawerOpen(true);
     try {
-      // PRESERVED: Use existing PAT and proxy logic
       const authHeader = `Basic ${btoa(`:${settings.devOpsPat}`)}`;
       const url = `https://dev.azure.com/${settings.organization}/${settings.project}/_apis/wit/wiql?api-version=6.0`;
       const proxyPrefix = settings.corsProxy || 'https://corsproxy.io/?url=';
       const proxyUrl = settings.useProxy ? `${proxyPrefix}${encodeURIComponent(url)}` : url;
       
-      // FIXED: Dynamic WorkItemType and improved state filter for reliable fetching
       const currentType = typeOverride || selectedDevOpsType;
-      // Fixed query to fetch assigned items correctly and handle "User Story" with spaces properly in WIQL
       const wiqlQuery = `SELECT [System.Id], [System.Title] FROM WorkItems WHERE [System.WorkItemType] = '${currentType}' AND [System.State] NOT IN ('Closed', 'Removed', 'Done') AND [System.AssignedTo] CONTAINS '${user.email}'`;
       
       const res = await fetch(proxyUrl, { 
@@ -856,9 +990,9 @@ const App: React.FC = () => {
                 setSelectedHistoryUser={setSelectedHistoryUser} isEditingHistory={isEditingHistory}
                 setIsEditingHistory={setIsEditingHistory} expandedUserFolderId={expandedUserFolderId}
                 setExpandedUserFolderId={setExpandedUserFolderId}
-                // ADDED: props for devops filtering
                 selectedDevOpsType={selectedDevOpsType}
                 setSelectedDevOpsType={setSelectedDevOpsType}
+                handleExport={handleExport}
               />
             )
           } 
