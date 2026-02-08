@@ -7,7 +7,7 @@ import { ChatBot } from './components/ChatBot';
 import { Login } from './components/Login';
 import WeeklyPlanPage from './components/WeeklyPlanPage';
 import { getPlan, updatePlan, getAllPlans } from './services/firebase';
-// ENHANCEMENT: Imported XLSX for Excel generation capabilities
+import { fixSpelling } from './services/geminiService';
 import * as XLSX from 'xlsx';
 
 const PRIORITY_ORDER: PriorityGroup[] = ['P1', 'P2', 'P3', 'Meeting'];
@@ -74,6 +74,8 @@ const MatrixBoard: React.FC<{
     selectedDevOpsType, setSelectedDevOpsType
   } = props;
 
+  const [isSpellingFixing, setIsSpellingFixing] = useState(false);
+
   const filteredRows = useMemo(() => {
     if (view === 'current') return rows;
     const activeHistory = (selectedHistoryUser?.id === userId) ? history : (selectedHistoryUser?.history || []);
@@ -120,6 +122,30 @@ const MatrixBoard: React.FC<{
       }
     };
     setRows(prev => [...prev, newRow]);
+  };
+
+  const handleMagicProofread = async () => {
+    if (isSpellingFixing) return;
+    setIsSpellingFixing(true);
+    try {
+      const newRows = await Promise.all(rows.map(async row => {
+        const fixedLabel = await fixSpelling(row.label);
+        const fixedDays = { ...row.days };
+        for (const day of Object.values(DayOfWeek)) {
+          if (fixedDays[day].text.trim()) {
+            fixedDays[day].text = await fixSpelling(fixedDays[day].text);
+          }
+        }
+        return { ...row, label: fixedLabel, days: fixedDays };
+      }));
+      setRows(newRows);
+      alert("Magic Proofread complete! Your matrix has been polished.");
+    } catch (e) {
+      console.error("Proofread failed", e);
+      alert("Spell check failed. Please try again later.");
+    } finally {
+      setIsSpellingFixing(false);
+    }
   };
 
   return (
@@ -238,6 +264,15 @@ const MatrixBoard: React.FC<{
               <svg className="w-5 h-5 text-slate-500 group-hover:text-blue-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
               </svg>
+            </button>
+
+            <button 
+              onClick={handleMagicProofread} 
+              disabled={isSpellingFixing}
+              className={`p-2.5 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 transition-all shadow-sm flex items-center justify-center group ${isSpellingFixing ? 'animate-pulse' : ''}`} 
+              title="Magic Spell Check & Polish"
+            >
+              <span className="text-xl">🪄</span>
             </button>
 
             <button onClick={() => syncDevOps()} className="px-6 py-2.5 bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg shadow-blue-100">

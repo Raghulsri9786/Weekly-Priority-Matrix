@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 
 export const analyzeDevOpsComments = async (comments: string[]): Promise<{summary: string, completed: string[], next: string[]}> => {
@@ -24,6 +25,24 @@ export const analyzeDevOpsComments = async (comments: string[]): Promise<{summar
   } catch (error) {
     console.error("DevOps Analysis failed:", error);
     return { summary: "Analysis unavailable", completed: [], next: [] };
+  }
+};
+
+/**
+ * Corrects spelling and grammar errors using gemini-flash-lite-latest for maximum speed.
+ */
+export const fixSpelling = async (text: string): Promise<string> => {
+  if (!text || text.trim().length < 2) return text;
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({
+      model: 'gemini-flash-lite-latest',
+      contents: `Fix only spelling and grammar. Keep the same length and meaning. Return ONLY the fixed text.\n\nText: "${text}"`,
+    });
+    return response.text?.trim() || text;
+  } catch (error) {
+    console.error("Spelling fix failed:", error);
+    return text;
   }
 };
 
