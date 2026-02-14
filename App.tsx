@@ -12,6 +12,30 @@ import * as XLSX from 'xlsx';
 
 const PRIORITY_ORDER: PriorityGroup[] = ['P1', 'P2', 'P3', 'Meeting'];
 
+const createEmptyDays = (): Record<DayOfWeek, DayState> => ({
+  [DayOfWeek.Monday]: { text: '', completed: false },
+  [DayOfWeek.Tuesday]: { text: '', completed: false },
+  [DayOfWeek.Wednesday]: { text: '', completed: false },
+  [DayOfWeek.Thursday]: { text: '', completed: false },
+  [DayOfWeek.Friday]: { text: '', completed: false },
+});
+
+const INITIAL_ROWS: PlannerRow[] = [
+  { id: '1', priorityGroup: 'P1', effortLabel: '50%', label: 'STRATEGIC INITIATIVES', days: createEmptyDays() },
+  { id: '2', priorityGroup: 'P2', effortLabel: '30%', label: 'OPERATIONAL TASKS', days: createEmptyDays() },
+  { id: '3', priorityGroup: 'P3', effortLabel: '15%', label: 'SUPPORT & AD-HOC', days: createEmptyDays() },
+  { id: '4', priorityGroup: 'Meeting', effortLabel: '5%', label: 'ENGAGEMENT & SYNCS', days: createEmptyDays() },
+];
+
+const getISOWeek = (date: Date) => {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return { weekNo, year: d.getUTCFullYear() };
+};
+
 const MatrixBoard: React.FC<{ 
   userId: string; 
   user: any; 
@@ -650,8 +674,24 @@ const App: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isEditingHistory, setIsEditingHistory] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [startDate, setStartDate] = useState('2026-01-12');
-  const [endDate, setEndDate] = useState('2026-01-16');
+  
+  // Initialize with the current week Monday-Friday
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date();
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(d.setDate(diff));
+    return monday.toISOString().split('T')[0];
+  });
+  
+  const [endDate, setEndDate] = useState(() => {
+    const d = new Date();
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1) + 4;
+    const friday = new Date(d.setDate(diff));
+    return friday.toISOString().split('T')[0];
+  });
+
   const [features, setFeatures] = useState<DevOpsFeature[]>([]);
   const [featureSearchTerm, setFeatureSearchTerm] = useState('');
   const [isDevOpsLoading, setIsDevOpsLoading] = useState(false);
@@ -707,43 +747,87 @@ const App: React.FC = () => {
     }
   }, [selectedDevOpsType]);
 
+  const calculateStats = (matrixRows: PlannerRow[]): HistoryStats => {
+    let totalTasks = 0;
+    let completedTasks = 0;
+    const distribution: Record<PriorityGroup, number> = { P1: 0, P2: 0, P3: 0, Meeting: 0 };
+    matrixRows.forEach(row => {
+      Object.values(row.days).forEach(day => {
+        if (day.text.trim()) {
+          totalTasks++;
+          distribution[row.priorityGroup]++;
+          if (day.completed) completedTasks++;
+        }
+      });
+    });
+    return { totalTasks, completedTasks, completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0, distribution };
+  };
+
   const handleDeploy = async () => {
     if (!userId) return;
-    const currentWeekRangeLabel = `${startDate} TO ${endDate}`;
-    const hasDuplicateWeek = history.some(entry => entry.weekRange === currentWeekRangeLabel);
-    if (hasDuplicateWeek) {
-      alert("A weekly plan already exists for the selected date range.");
+    
+    // 1. Validate required fields
+    if (!startDate || !endDate || rows.length === 0) {
+      alert("Missing required data to deploy.");
       return;
     }
+
+    const { weekNo, year } = getISOWeek(new Date(startDate));
+    const weekId = `Week-${weekNo}-${year}`;
+    const weekRangeLabel = `${startDate} TO ${endDate}`;
+
     setIsSyncing(true);
+
     try {
+      // 2. Store form data (Calculate stats first)
       const stats = calculateStats(rows);
+      
       const newEntry: HistoryEntry = {
         id: Math.random().toString(36).substr(2, 9),
-        weekNumber: history.length + 1,
-        weekRange: currentWeekRangeLabel,
+        weekNumber: weekNo,
+        weekRange: weekRangeLabel,
         timestamp: Date.now(),
         rows: JSON.parse(JSON.stringify(rows)),
-        stats
+        stats: stats,
+        status: "Deployed",
+        weekId: weekId
       };
-      const updatedHistory = [newEntry, ...history];
-      const nextWeekRows: PlannerRow[] = rows.map(row => ({
-        ...row,
-        days: (Object.keys(row.days) as DayOfWeek[]).reduce((acc, day) => {
-          const currentDayState = row.days[day];
-          acc[day] = currentDayState.completed ? { text: '', completed: false } : { ...currentDayState };
-          return acc;
-        }, {} as Record<DayOfWeek, DayState>)
-      }));
-      setRows(nextWeekRows);
+
+      let updatedHistory = [...history];
+      
+      // 4. Weekly Sheet Logic: Append if exists, otherwise create
+      const existingIdx = updatedHistory.findIndex(entry => entry.weekId === weekId);
+      if (existingIdx !== -1) {
+        // "Append" / Update existing sheet for the current week
+        updatedHistory[existingIdx] = newEntry;
+      } else {
+        // Create new sheet
+        updatedHistory = [newEntry, ...updatedHistory];
+      }
+
+      // REQUIRED PROCESS: Perform carrying over or business logic before resetting
+      // (Optional: Carry over pending tasks if desired, but prompt says "reset completely")
+      
+      // 5. STORE IN DB & RESET FORM
+      // Reset rows to fresh blank page
+      const freshRows = INITIAL_ROWS.map(r => ({ ...r, id: Math.random().toString(36).substr(2, 5), days: createEmptyDays() }));
+      
+      await updatePlan(userId, freshRows, updatedHistory);
+      
+      // Update local state
+      setRows(freshRows);
       setHistory(updatedHistory);
-      await updatePlan(userId, nextWeekRows, updatedHistory);
+      setView('current');
+
       const refreshedAll = await getAllPlans();
       setAllUsersPlans(refreshedAll);
-      alert("Week successfully deployed.");
+      
+      alert("Deployment Successful");
     } catch (e) {
-      alert("Deployment failed.");
+      console.error("Deploy failed:", e);
+      alert("An error occurred during deployment.");
     } finally {
+      // 6. Prevent duplicates: Re-enable only after result or on error
       setIsSyncing(false);
     }
   };
@@ -752,7 +836,7 @@ const App: React.FC = () => {
     if (!userId) return;
     setIsSyncing(true);
     try {
-      const updatedRows = history[historyIndex].rows;
+      const updatedRows = (selectedHistoryUser?.id === userId ? history : selectedHistoryUser?.history || [])[historyIndex].rows;
       const stats = calculateStats(updatedRows);
       const updatedHistory = [...history];
       updatedHistory[historyIndex] = { ...updatedHistory[historyIndex], stats };
@@ -769,11 +853,9 @@ const App: React.FC = () => {
     }
   };
 
-  // ENHANCEMENT: Implemented Excel export logic with legacy layout styling (colors, borders, and wrapping)
   const handleExport = () => {
     if (!user) return;
 
-    // Determine target rows and label based on active view to fix archive export bug
     let exportRows = rows;
     let rangeLabel = `${startDate}_to_${endDate}`;
 
@@ -782,12 +864,10 @@ const App: React.FC = () => {
       const archiveEntry = activeHistory[historyIndex];
       if (archiveEntry) {
         exportRows = archiveEntry.rows;
-        // FORMAT: Replace ' TO ' with '_to_' from saved weekRange
         rangeLabel = archiveEntry.weekRange.replace(/\s+TO\s+/g, '_to_');
       }
     }
 
-    // PART 1 – PRIORITY ORDER IN EXCEL: Sort exported rows by P1, P2, P3, Meeting to follow legacy sectioning
     const PRIORITY_RANK: Record<string, number> = { 'P1': 1, 'P2': 2, 'P3': 3, 'Meeting': 4 };
     const sortedExportRows = [...exportRows].sort((a, b) => 
       (PRIORITY_RANK[a.priorityGroup] || 99) - (PRIORITY_RANK[b.priorityGroup] || 99)
@@ -802,7 +882,6 @@ const App: React.FC = () => {
 
       Object.values(DayOfWeek).forEach(day => {
         const dayState = row.days[day];
-        // PART 1 – CLEAN CELL TEXT: Remove "[COMPLETED]" prefixes for cleaner report
         rowData[day] = dayState.text || '';
       });
 
@@ -811,23 +890,21 @@ const App: React.FC = () => {
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     
-    // LEGACY LAYOUT: Configure column widths for readability as requested in Part 1
     worksheet['!cols'] = [
-      { wch: 40 }, // Activity Layer
-      { wch: 10 }, // Target %
-      { wch: 10 }, // Priority
-      { wch: 50 }, // Monday
-      { wch: 50 }, // Tuesday
-      { wch: 50 }, // Wednesday
-      { wch: 50 }, // Thursday
-      { wch: 50 }, // Friday
+      { wch: 40 }, 
+      { wch: 10 }, 
+      { wch: 10 }, 
+      { wch: 50 }, 
+      { wch: 50 }, 
+      { wch: 50 }, 
+      { wch: 50 }, 
+      { wch: 50 }, 
     ];
     
     const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:A1');
     
-    // PART 2 & 4 – COLORING, BORDERS AND WRAPPING (Data Rows)
     for (let R = range.s.r + 1; R <= range.e.r; ++R) {
-      const rowObj = sortedExportRows[R - 1]; // Correct offset for 0-based array index
+      const rowObj = sortedExportRows[R - 1];
 
       for (let C = 0; C <= 7; ++C) {
         const cell_address = XLSX.utils.encode_cell({c: C, r: R});
@@ -843,24 +920,19 @@ const App: React.FC = () => {
           isCompleted = rowObj.days[dayKey].completed;
         }
 
-        // Apply styles to all data cells
         worksheet[cell_address].s = {
-          // PART 2 – COLOR DIFFERENTIATION: Background fill based on status (Light Green for completed, Light Red for pending)
           fill: isTaskColumn ? {
             patternType: "solid",
             fgColor: { rgb: isCompleted ? "C6EFCE" : "FFC7CE" }
           } : undefined,
-          // PART 2 – COLOR DIFFERENTIATION: Text color based on status (Dark Green for completed, Dark Red for pending)
           font: {
             color: isTaskColumn ? { rgb: isCompleted ? "006100" : "9C0006" } : { rgb: "0F172A" }
           },
-          // PART 4 – CELL READABILITY: Wrap text and top alignment
           alignment: {
             wrapText: true,
             vertical: "top",
             horizontal: isTaskColumn ? "left" : "center"
           },
-          // PART 4 – BORDERS: Thin borders for all visible cells
           border: {
             top: { style: "thin", color: { rgb: "E2E8F0" } },
             bottom: { style: "thin", color: { rgb: "E2E8F0" } },
@@ -871,14 +943,13 @@ const App: React.FC = () => {
       }
     }
 
-    // PART 3 – HEADER FORMATTING: Gray background, Bold, and Centered
     for (let C = 0; C <= 7; ++C) {
       const cell_address = XLSX.utils.encode_cell({c: C, r: 0});
       if (worksheet[cell_address]) {
         worksheet[cell_address].s = {
-          fill: { patternType: "solid", fgColor: { rgb: "F1F5F9" } }, // Light Gray background
-          font: { bold: true, color: { rgb: "0F172A" } }, // Bold Header text
-          alignment: { horizontal: "center", vertical: "center" }, // Centered titles
+          fill: { patternType: "solid", fgColor: { rgb: "F1F5F9" } }, 
+          font: { bold: true, color: { rgb: "0F172A" } }, 
+          alignment: { horizontal: "center", vertical: "center" }, 
           border: {
             top: { style: "thin", color: { rgb: "CBD5E1" } },
             bottom: { style: "medium", color: { rgb: "0F172A" } },
@@ -893,26 +964,9 @@ const App: React.FC = () => {
     XLSX.utils.book_append_sheet(workbook, worksheet, "Weekly Plan");
 
     const cleanUserName = user.name.replace(/\s+/g, '_');
-    // FILE NAME FORMAT: <LoggedInUserName>_WeeklyPlan_<StartDate>_to_<EndDate>.xlsx
     const fileName = `${cleanUserName}_WeeklyPlan_${rangeLabel}.xlsx`;
 
     XLSX.writeFile(workbook, fileName);
-  };
-
-  const calculateStats = (matrixRows: PlannerRow[]): HistoryStats => {
-    let totalTasks = 0;
-    let completedTasks = 0;
-    const distribution: Record<PriorityGroup, number> = { P1: 0, P2: 0, P3: 0, Meeting: 0 };
-    matrixRows.forEach(row => {
-      Object.values(row.days).forEach(day => {
-        if (day.text.trim()) {
-          totalTasks++;
-          distribution[row.priorityGroup]++;
-          if (day.completed) completedTasks++;
-        }
-      });
-    });
-    return { totalTasks, completedTasks, completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0, distribution };
   };
 
   const syncDevOps = async (isAuto = false, typeOverride?: string) => {

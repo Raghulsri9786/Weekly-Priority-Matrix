@@ -36,6 +36,8 @@ export interface HistoryEntry {
   timestamp: number;
   rows: PlannerRow[];
   stats: HistoryStats;
+  status?: string;
+  weekId?: string;
 }
 
 export interface UserSettings {
